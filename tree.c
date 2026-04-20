@@ -10,11 +10,14 @@
 //   "100644 hello.txt\0" followed by 32 raw bytes of SHA-256
 
 #include "tree.h"
+#include "index.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
 // ─── Mode Constants ─────────────────────────────────────────────────────────
 
@@ -129,9 +132,86 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //   - object_write    : save that binary buffer to the store as OBJ_TREE
 //
 // Returns 0 on success, -1 on error.
+static int build_tree_recursive(IndexEntry *entries, int count, int depth, ObjectID *id_out) {
+    if (count == 0) {
+        Tree tree;
+        tree.count = 0;
+        void *data;
+        size_t len;
+        if (tree_serialize(&tree, &data, &len) != 0) return -1;
+        int rc = object_write(OBJ_TREE, data, len, id_out);
+        free(data);
+        return rc;
+    }
+
+    Tree tree;
+    tree.count = 0;
+
+    int i = 0;
+    while (i < count) {
+        if (tree.count >= MAX_TREE_ENTRIES) return -1;
+
+        const char *rel_path = entries[i].path + depth;
+        const char *slash = strchr(rel_path, '/');
+
+        if (!slash) {
+            // Current path component is a file
+            TreeEntry *te = &tree.entries[tree.count++];
+            te->mode = entries[i].mode;
+            te->hash = entries[i].hash;
+            strncpy(te->name, rel_path, sizeof(te->name) - 1);
+            te->name[sizeof(te->name) - 1] = '\0';
+            i++;
+        } else {
+            // Current path component is a directory
+            size_t dir_len = slash - rel_path;
+            
+            // Find all entries starting with this directory prefix
+            int j = i + 1;
+            while (j < count) {
+                const char *next_path = entries[j].path + depth;
+                if (strncmp(next_path, rel_path, dir_len) == 0 && next_path[dir_len] == '/') {
+                    j++;
+                } else {
+                    break;
+                }
+            }
+
+            ObjectID sub_id;
+            if (build_tree_recursive(&entries[i], j - i, depth + dir_len + 1, &sub_id) != 0) {
+                return -1;
+            }
+
+            TreeEntry *te = &tree.entries[tree.count++];
+            te->mode = MODE_DIR;
+            te->hash = sub_id;
+            strncpy(te->name, rel_path, dir_len);
+            te->name[dir_len] = '\0';
+
+            i = j;
+        }
+    }
+
+    void *data;
+    size_t len;
+    if (tree_serialize(&tree, &data, &len) != 0) return -1;
+
+    int rc = object_write(OBJ_TREE, data, len, id_out);
+    free(data);
+    return rc;
+}
+
+static int compare_index_entries(const void *a, const void *b) {
+    return strcmp(((const IndexEntry *)a)->path, ((const IndexEntry *)b)->path);
+}
+
 int tree_from_index(ObjectID *id_out) {
-    // TODO: Implement recursive tree building
-    // (See Lab Appendix for logical steps)
-    (void)id_out;
-    return -1;
+    Index idx;
+    if (index_load(&idx) != 0) {
+        return -1;
+    }
+
+    qsort(idx.entries, idx.count, sizeof(IndexEntry), compare_index_entries);
+
+    return build_tree_recursive(idx.entries, idx.count, 0, id_out);
 }
