@@ -194,8 +194,47 @@ int head_update(const ObjectID *new_commit) {
 //
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out) {
-    // TODO: Implement commit creation
-    // (See Lab Appendix for logical steps)
-    (void)message; (void)commit_id_out;
-    return -1;
+    Commit c;
+    memset(&c, 0, sizeof(c));
+    
+    if (tree_from_index(&c.tree) != 0) {
+        return -1;
+    }
+    
+    if (head_read(&c.parent) == 0) {
+        c.has_parent = 1;
+    } else {
+        c.has_parent = 0;
+    }
+    
+    const char *author = pes_author();
+    strncpy(c.author, author, sizeof(c.author) - 1);
+    c.author[sizeof(c.author) - 1] = '\0';
+    strncpy(c.committer, author, sizeof(c.committer) - 1);
+    c.committer[sizeof(c.committer) - 1] = '\0';
+    
+    c.author_time = (uint64_t)time(NULL);
+    c.committer_time = c.author_time;
+    
+    strncpy(c.message, message, sizeof(c.message) - 1);
+    c.message[sizeof(c.message) - 1] = '\0';
+    
+    char *data = NULL;
+    size_t len = 0;
+    if (commit_serialize(&c, &data, &len) != 0) {
+        return -1;
+    }
+    
+    if (object_write(OBJ_COMMIT, data, len, commit_id_out) != 0) {
+        free(data);
+        return -1;
+    }
+    free(data);
+    
+    if (head_update(commit_id_out) != 0) {
+        // Warning: fail to update ref
+        return -1;
+    }
+    
+    return 0;
 }
