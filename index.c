@@ -158,6 +158,10 @@ int index_load(Index *index) {
     return 0;
 }
 
+int index_save_compare(const void *a, const void *b) {
+    return strcmp(((const IndexEntry *)a)->path, ((const IndexEntry *)b)->path);
+}
+
 // Save the index to .pes/index atomically.
 //
 // HINTS - Useful functions and syscalls:
@@ -169,11 +173,32 @@ int index_load(Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    Index temp = *index;
+    if (temp.count > 0) {
+        qsort(temp.entries, temp.count, sizeof(IndexEntry), index_save_compare);
+    }
+
+    FILE *f = fopen(".pes/index.lock", "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < temp.count; i++) {
+        IndexEntry *ent = &temp.entries[i];
+        char hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&ent->hash, hex);
+        fprintf(f, "%06o %s %lu %u %s\n", ent->mode, hex, (unsigned long)ent->mtime_sec, ent->size, ent->path);
+    }
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+
+    if (rename(".pes/index.lock", INDEX_FILE) != 0) {
+        return -1;
+    }
+    return 0;
 }
+
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
 // Stage a file for the next commit.
 //
@@ -185,8 +210,49 @@ int index_save(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
+    FILE *f = fopen(path, "rb");
+    if (!f) return index_remove(index, path);
+
+    struct stat st;
+    if (fstat(fileno(f), &st) != 0) {
+        fclose(f);
+        return -1;
+    }
+
+    void *data = NULL;
+    if (st.st_size > 0) {
+        data = malloc(st.st_size);
+        if (!data) {
+            fclose(f);
+            return -1;
+        }
+        if (fread(data, 1, st.st_size, f) != st.st_size) {
+            free(data);
+            fclose(f);
+            return -1;
+        }
+    }
+    fclose(f);
+
+    ObjectID blob_id;
+    if (object_write(OBJ_BLOB, data, st.st_size, &blob_id) != 0) {
+        free(data);
+        return -1;
+    }
+    free(data);
+
+    IndexEntry *entry = index_find(index, path);
+    if (!entry) {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        entry = &index->entries[index->count++];
+        strncpy(entry->path, path, sizeof(entry->path) - 1);
+        entry->path[sizeof(entry->path) - 1] = '\0';
+    }
+
+    entry->mode = (st.st_mode & S_IXUSR) ? 0100755 : 0100644;
+    entry->hash = blob_id;
+    entry->mtime_sec = st.st_mtime;
+    entry->size = st.st_size;
+
+    return index_save(index);
 }
