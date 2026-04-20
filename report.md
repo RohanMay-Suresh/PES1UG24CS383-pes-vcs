@@ -20,3 +20,40 @@ An algorithm to perform garbage collection uses graph traversal (Mark-and-Sweep)
 
 **Q6.2: Race condition with concurrent garbage collection and commits**
 If garbage collection runs concurrently with a commit, a race condition can occur. Suppose a user stages a large file (written to `.pes/objects/`). This blob currently has no commit or tree pointing to it yet because the `commit` operation is still in progress. If GC starts at this exact moment, it calculates the reachable objects (which does not include the newly staged blob) and deletes the new blob. A split second later, the `commit` finishes and creates a tree and commit pointing to the deleted blob, resulting in repository corruption. Real Git avoids this by enforcing a "grace period" (e.g., 2 weeks by default)—GC will only delete unreachable objects if their file modification timestamp is older than this grace period, ensuring newly created loose objects are not mistakenly pruned.
+
+## Screenshots
+
+### Phase 1
+**1A: All tests passing for objects**
+![test_objects passing](screenshots/1A.png)
+
+**1B: Sharded directory structure**
+![Objects directory structure](screenshots/1B.png)
+
+### Phase 2
+**2A: All tests passing for tree**
+![test_tree passing](screenshots/2A.png)
+
+**2B: Raw Tree Object Hex Dump**
+![xxd Raw Tree Object](screenshots/2B.png)
+
+### Phase 3
+**3A: pes init, add, and status sequence**
+![Status sequence](screenshots/3A.png)
+
+**3B: Text-format index**
+![Text Index Format](screenshots/3B.png)
+
+### Phase 4
+**4A: pes log Output**
+![pes log Output](screenshots/4A.png)
+
+**4B: Object Store Growth**
+![Object Store Growth](screenshots/4B.png)
+
+**4C: HEAD and branch reference**
+![HEAD and Branches](screenshots/4C.png)
+
+### Final Integration Test
+**Full Integration Test Output**
+![make test-integration passing](screenshots/Final.png)
